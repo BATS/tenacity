@@ -447,8 +447,6 @@ class RetryCallState(object):
         self.outcome, self.outcome_timestamp = fut, ts
 
 
-if asyncio:
-    from tenacity._asyncio import AsyncRetrying
 
 if tornado:
     from tenacity.tornadoweb import TornadoRetrying
