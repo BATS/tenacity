@@ -181,7 +181,7 @@ class BaseRetrying(object):
                  before=before_nothing,
                  after=after_nothing,
                  before_sleep=None,
-                 reraise=False,
+                 reraise=True,
                  retry_error_cls=RetryError,
                  retry_error_callback=None):
         self.sleep = sleep
