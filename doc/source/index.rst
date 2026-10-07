@@ -1,17 +1,19 @@
 Tenacity
 ========
 .. image:: https://img.shields.io/pypi/v/tenacity.svg
-    :target: https://pypi.python.org/pypi/tenacity
+    :target: https://pypi.org/project/tenacity
 
-.. image:: https://circleci.com/gh/jd/tenacity.svg?style=svg
-    :target: https://circleci.com/gh/jd/tenacity
+.. image:: https://img.shields.io/pypi/pyversions/tenacity.svg
+    :target: https://pypi.org/project/tenacity
 
-.. image:: https://img.shields.io/badge/SayThanks.io-%E2%98%BC-1EAEDB.svg
-    :target: https://saythanks.io/to/jd
+.. image:: https://github.com/jd/tenacity/actions/workflows/ci.yaml/badge.svg?branch=main
+    :target: https://github.com/jd/tenacity/actions/workflows/ci.yaml
 
-.. image:: https://img.shields.io/endpoint.svg?url=https://dashboard.mergify.io/badges/jd/tenacity&style=flat
+.. image:: https://img.shields.io/endpoint.svg?url=https://api.mergify.com/badges/jd/tenacity&style=flat
    :target: https://mergify.io
    :alt: Mergify Status
+
+**Please refer to the** `tenacity documentation <https://tenacity.readthedocs.io/en/latest/>`_ **for a better experience.**
 
 Tenacity is an Apache 2.0 licensed general-purpose retrying library, written in
 Python, to simplify the task of adding retry behavior to just about anything.
@@ -80,7 +82,7 @@ Examples
 Basic Retry
 ~~~~~~~~~~~
 
-.. testsetup:: *
+.. testsetup::
 
     import logging
     #
@@ -98,7 +100,7 @@ an exception is raised.
 .. testcode::
 
     @retry
-    def never_give_up_never_surrender():
+    def never_gonna_give_you_up():
         print("Retry forever ignoring Exceptions, don't wait between retries")
         raise Exception
 
@@ -123,6 +125,16 @@ retrying stuff.
     @retry(stop=stop_after_delay(10))
     def stop_after_10_s():
         print("Stopping after 10 seconds")
+        raise Exception
+
+If you're on a tight deadline, and exceeding your delay time isn't ok,
+then you can give up on retries one attempt before you would exceed the delay.
+
+.. testcode::
+
+    @retry(stop=stop_before_delay(10))
+    def stop_before_10_s():
+        print("Stopping 1 attempt before 10 seconds")
         raise Exception
 
 You can combine several stop conditions by using the `|` operator:
@@ -208,9 +220,17 @@ exceptions, as in the cases here.
 
 .. testcode::
 
+    class ClientError(Exception):
+        """Some type of client error."""
+
     @retry(retry=retry_if_exception_type(IOError))
     def might_io_error():
         print("Retry forever with no wait if an IOError occurs, raise any other errors")
+        raise Exception
+
+    @retry(retry=retry_if_not_exception_type(ClientError))
+    def might_client_error():
+        print("Retry forever with no wait if any error other than ClientError occurs. Immediately raise ClientError.")
         raise Exception
 
 We can also use the result of the function to alter the behavior of retrying.
@@ -224,6 +244,21 @@ We can also use the result of the function to alter the behavior of retrying.
     @retry(retry=retry_if_result(is_none_p))
     def might_return_none():
         print("Retry with no wait if return value is None")
+
+See also these methods:
+
+.. testcode::
+
+    retry_if_exception
+    retry_if_exception_type
+    retry_if_not_exception_type
+    retry_unless_exception_type
+    retry_if_result
+    retry_if_not_result
+    retry_if_exception_message
+    retry_if_not_exception_message
+    retry_any
+    retry_all
 
 We can also combine several conditions:
 
@@ -254,8 +289,12 @@ exception:
 Error Handling
 ~~~~~~~~~~~~~~
 
-While callables that "timeout" retrying raise a `RetryError` by default,
-we can reraise the last attempt's exception if needed:
+Normally when your function fails its final time (and will not be retried again based on your settings),
+a `RetryError` is raised. The exception your code encountered will be shown somewhere in the *middle*
+of the stack trace.
+
+If you would rather see the exception your code encountered at the *end* of the stack trace (where it
+is most visible), you can set `reraise=True`.
 
 .. testcode::
 
@@ -278,6 +317,7 @@ by using the before callback function:
 .. testcode::
 
     import logging
+    import sys
 
     logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
@@ -292,6 +332,7 @@ In the same spirit, It's possible to execute after a call that failed:
 .. testcode::
 
     import logging
+    import sys
 
     logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
@@ -308,6 +349,7 @@ retries happen after a wait interval, so the keyword argument is called
 .. testcode::
 
     import logging
+    import sys
 
     logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
@@ -323,7 +365,7 @@ Statistics
 ~~~~~~~~~~
 
 You can access the statistics about the retry made over a function by using the
-`retry` attribute attached to the function and its `statistics` attribute:
+`statistics` attribute attached to the function:
 
 .. testcode::
 
@@ -336,7 +378,7 @@ You can access the statistics about the retry made over a function by using the
     except Exception:
         pass
 
-    print(raise_my_exception.retry.statistics)
+    print(raise_my_exception.statistics)
 
 .. testoutput::
    :hide:
@@ -370,52 +412,39 @@ without raising an exception (or you can re-raise or do anything really)
     def eventually_return_false():
         return False
 
-.. note::
-
-   Calling the parameter ``retry_state`` is important, because this is how
-   *tenacity* internally distinguishes callbacks from their :ref:`deprecated
-   counterparts <deprecated-callbacks>`.
-
 RetryCallState
 ~~~~~~~~~~~~~~
 
-``retry_state`` argument is an object of `RetryCallState` class:
+``retry_state`` argument is an object of :class:`~tenacity.RetryCallState` class.
+Its most useful attributes are:
 
-.. autoclass:: tenacity.RetryCallState
+* ``attempt_number`` — number of the current attempt (starts at 1)
+* ``outcome`` — a :class:`concurrent.futures.Future` holding the last result or exception
+* ``seconds_since_start`` — total elapsed seconds from the first attempt to the last outcome (``None`` if no outcome yet)
+* ``idle_for`` — cumulative seconds spent sleeping between attempts
+* ``start_time`` — :func:`time.monotonic` timestamp of the first attempt
 
-   Constant attributes:
+For example, to log the total elapsed time after all retries:
 
-   .. autoinstanceattribute:: start_time(float)
-      :annotation:
+.. testcode::
 
-   .. autoinstanceattribute:: retry_object(BaseRetrying)
-      :annotation:
+    import logging
 
-   .. autoinstanceattribute:: fn(callable)
-      :annotation:
+    logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
-   .. autoinstanceattribute:: args(tuple)
-      :annotation:
+    logger = logging.getLogger(__name__)
 
-   .. autoinstanceattribute:: kwargs(dict)
-      :annotation:
+    def log_elapsed(retry_state):
+        logger.info('Finished after %.3fs', retry_state.seconds_since_start)
 
-   Variable attributes:
+    @retry(stop=stop_after_attempt(3), after=log_elapsed)
+    def raise_my_exception():
+        raise MyException("Fail")
 
-   .. autoinstanceattribute:: attempt_number(int)
-      :annotation:
-
-   .. autoinstanceattribute:: outcome(tenacity.Future or None)
-      :annotation:
-
-   .. autoinstanceattribute:: outcome_timestamp(float or None)
-      :annotation:
-
-   .. autoinstanceattribute:: idle_for(float)
-      :annotation:
-
-   .. autoinstanceattribute:: next_action(tenacity.RetryAction or None)
-      :annotation:
+    try:
+        raise_my_exception()
+    except RetryError:
+        pass
 
 Other Custom Callbacks
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -424,33 +453,33 @@ It's also possible to define custom callbacks for other keyword arguments.
 
 .. function:: my_stop(retry_state)
 
-   :param RetryState retry_state: info about current retry invocation
+   :param RetryCallState retry_state: info about current retry invocation
    :return: whether or not retrying should stop
    :rtype: bool
 
 .. function:: my_wait(retry_state)
 
-   :param RetryState retry_state: info about current retry invocation
+   :param RetryCallState retry_state: info about current retry invocation
    :return: number of seconds to wait before next retry
    :rtype: float
 
 .. function:: my_retry(retry_state)
 
-   :param RetryState retry_state: info about current retry invocation
+   :param RetryCallState retry_state: info about current retry invocation
    :return: whether or not retrying should continue
    :rtype: bool
 
 .. function:: my_before(retry_state)
 
-   :param RetryState retry_state: info about current retry invocation
+   :param RetryCallState retry_state: info about current retry invocation
 
 .. function:: my_after(retry_state)
 
-   :param RetryState retry_state: info about current retry invocation
+   :param RetryCallState retry_state: info about current retry invocation
 
 .. function:: my_before_sleep(retry_state)
 
-   :param RetryState retry_state: info about current retry invocation
+   :param RetryCallState retry_state: info about current retry invocation
 
 Here's an example with a custom ``before_sleep`` function:
 
@@ -480,92 +509,52 @@ Here's an example with a custom ``before_sleep`` function:
     except RetryError:
         pass
 
-.. _deprecated-callbacks:
 
-.. note::
+Common Patterns
+~~~~~~~~~~~~~~~
 
-   It was also possible to define custom callbacks before, but they accepted
-   varying parameter sets and none of those provided full state. The old way is
-   deprecated, but kept for backward compatibility.
-
-   .. function:: my_deprecated_stop(previous_attempt_number, delay_since_first_attempt)
-
-      *deprecated*
-
-      :param previous_attempt_number: the number of current attempt
-      :type previous_attempt_number: int
-      :param delay_since_first_attempt: interval in seconds between the
-           beginning of first attempt and current time
-      :type delay_since_first_attempt: float
-      :rtype: bool
-
-   .. function:: my_deprecated_wait(previous_attempt_number, delay_since_first_attempt [, last_result])
-
-      *deprecated*
-
-      :param previous_attempt_number: the number of current attempt
-      :type previous_attempt_number: int
-      :param delay_since_first_attempt: interval in seconds between the
-           beginning of first attempt and current time
-      :type delay_since_first_attempt: float
-      :param tenacity.Future last_result: current outcome
-
-      :return: number of seconds to wait before next retry
-      :rtype: float
-
-   .. function:: my_deprecated_retry(attempt)
-
-      *deprecated*
-
-      :param tenacity.Future attempt: current outcome
-      :return: whether or not retrying should continue
-      :rtype: bool
-
-   .. function:: my_deprecated_before(func, trial_number)
-
-      *deprecated*
-
-      :param callable func: function whose outcome is to be retried
-      :param int trial_number: the number of current attempt
-
-   .. function:: my_deprecated_after(func, trial_number, trial_time_taken)
-
-      *deprecated*
-
-      :param callable func: function whose outcome is to be retried
-      :param int trial_number: the number of current attempt
-      :param float trial_time_taken: interval in seconds between the beginning
-         of first attempt and current time
-
-   .. function:: my_deprecated_before_sleep(func, sleep, last_result)
-
-      *deprecated*
-
-      :param callable func: function whose outcome is to be retried
-      :param float sleep: number of seconds to wait until next retry
-      :param tenacity.Future last_result: current outcome
+**Running setup code between retries** (e.g. reconnecting):
 
 .. testcode::
 
-    import logging
+    def reconnect(retry_state):
+        print("Reconnecting before next attempt...")
 
-    logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
-
-    logger = logging.getLogger(__name__)
-
-    def my_before_sleep(retry_object, sleep, last_result):
-        logger.warning(
-            'Retrying %s: last_result=%s, retrying in %s seconds...',
-            retry_object.fn, last_result, sleep)
-
-    @retry(stop=stop_after_attempt(3), before_sleep=my_before_sleep)
-    def raise_my_exception():
-        raise MyException("Fail")
+    @retry(stop=stop_after_attempt(3), before_sleep=reconnect)
+    def send_data():
+        raise MyException("connection lost")
 
     try:
-        raise_my_exception()
+        send_data()
     except RetryError:
         pass
+
+.. testoutput::
+   :hide:
+
+   ...
+
+The ``before_sleep`` callback runs after a failed attempt and before sleeping,
+making it ideal for re-establishing connections, refreshing tokens, or any
+other setup that needs to happen before the next attempt.
+
+**Accessing the attempt number inside the function** using the iterator API:
+
+.. testcode::
+
+    from tenacity import Retrying
+
+    for attempt in Retrying(stop=stop_after_attempt(3)):
+        with attempt:
+            print(f"Attempt {attempt.retry_state.attempt_number}")
+            if attempt.retry_state.attempt_number < 3:
+                raise MyException("not yet")
+
+.. testoutput::
+   :hide:
+
+   ...
+
 
 Changing Arguments at Run Time
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -584,7 +573,7 @@ using the `retry_with` function attached to the wrapped function:
     except Exception:
         pass
 
-    print(raise_my_exception.retry.statistics)
+    print(raise_my_exception.statistics)
 
 .. testoutput::
    :hide:
@@ -602,6 +591,64 @@ to use the `retry` decorator - you can instead use `Retrying` directly:
     def try_never_good_enough(max_attempts=3):
         retryer = Retrying(stop=stop_after_attempt(max_attempts), reraise=True)
         retryer(never_good_enough, 'I really do try')
+
+You may also want to change the behaviour of a decorated function temporarily,
+like in tests to avoid unnecessary wait times. You can modify/patch the `retry`
+attribute attached to the function. Bear in mind this is a write-only attribute,
+statistics should be read from the function `statistics` attribute.
+
+.. testcode::
+
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(3))
+    def raise_my_exception():
+        raise MyException("Fail")
+
+    from unittest import mock
+
+    with mock.patch.object(raise_my_exception.retry, "wait", wait_fixed(0)):
+        try:
+            raise_my_exception()
+        except Exception:
+            pass
+
+    print(raise_my_exception.statistics)
+
+.. testoutput::
+   :hide:
+
+   ...
+
+Disabling Retries
+~~~~~~~~~~~~~~~~~
+
+You can disable retrying entirely by passing ``enabled=False``. When disabled,
+the decorated function is called directly without any retry logic. This is
+useful during development or testing when you want fast feedback on failures:
+
+.. testcode::
+
+    import os
+
+    @retry(
+        enabled=os.getenv("ENABLE_RETRIES", "1") != "0",
+        stop=stop_after_attempt(5),
+        wait=wait_fixed(1),
+    )
+    def call_api():
+        pass  # your code here
+
+    call_api()
+
+You can also use ``retry_with`` to disable retries on a per-call basis:
+
+.. testcode::
+
+    @retry(stop=stop_after_attempt(5))
+    def call_api():
+        pass  # your code here
+
+    # In tests:
+    call_api.retry_with(enabled=False)()
 
 Retrying code block
 ~~~~~~~~~~~~~~~~~~~
@@ -638,32 +685,84 @@ With async code you can use AsyncRetrying.
       except RetryError:
           pass
 
+In both cases, you may want to set the result to the attempt so it's available
+in retry strategies like ``retry_if_result``. This can be done accessing the
+``retry_state`` property:
+
+.. testcode::
+
+    from tenacity import AsyncRetrying, retry_if_result
+
+    async def function():
+       async for attempt in AsyncRetrying(retry=retry_if_result(lambda x: x < 3)):
+           with attempt:
+               result = 1  # Some complex calculation, function call, etc.
+           if not attempt.retry_state.outcome.failed:
+               attempt.retry_state.set_result(result)
+       return result
+
 Async and retry
 ~~~~~~~~~~~~~~~
 
-Finally, ``retry`` works also on asyncio and Tornado (>= 4.5) coroutines.
+Finally, ``retry`` works also on asyncio, Trio, and Tornado coroutines.
 Sleeps are done asynchronously too.
 
 .. code-block:: python
 
     @retry
-    async def my_async_function(loop):
-        await loop.getaddrinfo('8.8.8.8', 53)
+    async def my_asyncio_function():
+        await asyncio.getaddrinfo('8.8.8.8', 53)
 
 .. code-block:: python
 
     @retry
-    @tornado.gen.coroutine
-    def my_async_function(http_client, url):
-        yield http_client.fetch(url)
+    async def my_async_trio_function():
+        await trio.socket.getaddrinfo('8.8.8.8', 53)
 
-You can even use alternative event loops such as `curio` or `Trio` by passing the correct sleep function:
+.. code-block:: python
+
+    @retry
+    async def my_async_tornado_function(http_client, url):
+        await http_client.fetch(url)
+
+You can use alternative event loops by passing the correct sleep function:
 
 .. code-block:: python
 
     @retry(sleep=trio.sleep)
-    async def my_async_function(loop):
-        await asks.get('https://example.org')
+    async def my_async_trio_function_with_sleep():
+        ...
+
+Generators
+~~~~~~~~~~
+
+``retry`` does not support generator or async generator functions. Decorating a
+generator with ``@retry`` will not retry on exceptions raised during iteration
+— the decorator wraps the function call itself, which for generators simply
+returns a generator object without executing any of the body.
+
+Also note that generators passed *as arguments* to a retried function will be
+exhausted after the first attempt and will not be rewound automatically on
+retry. If you need to pass a generator as an argument, consider passing a
+factory function instead:
+
+.. code-block:: python
+
+    # Bad: generator will be exhausted after the first attempt
+    @retry
+    def process(items):
+        for item in items:
+            do_work(item)
+
+    process(my_generator())  # retries will see an empty generator
+
+    # Good: pass a factory so a fresh generator is created on each attempt
+    @retry
+    def process(items_factory):
+        for item in items_factory():
+            do_work(item)
+
+    process(my_generator)  # each retry gets a fresh generator
 
 Contribute
 ----------
@@ -671,24 +770,17 @@ Contribute
 #. Check for open issues or open a fresh issue to start a discussion around a
    feature idea or a bug.
 #. Fork `the repository`_ on GitHub to start making your changes to the
-   **master** branch (or branch off of it).
+   **main** branch (or branch off of it).
 #. Write a test which shows that the bug was fixed or that the feature works as
    expected.
 #. Add a `changelog <#Changelogs>`_
 #. Make the docs better (or more detailed, or more easier to read, or ...)
 
+Running the test suite locally::
+
+    uv run poe check    # run tests + build docs
+    uv run poe lint     # run ruff linter
+    uv run poe mypy     # run type checker
+    uv run poe all      # run everything
+
 .. _`the repository`: https://github.com/jd/tenacity
-
-Changelogs
-~~~~~~~~~~
-
-`reno`_ is used for managing changelogs. Take a look at their usage docs.
-
-The doc generation will automatically compile the changelogs. You just need to add them.
-
-.. code-block:: sh
-
-    # Opens a template file in an editor
-    tox -e reno -- new some-slug-for-my-change --edit
-
-.. _`reno`: https://docs.openstack.org/reno/latest/user/usage.html

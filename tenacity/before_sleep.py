@@ -14,33 +14,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import traceback
+import typing
+
 from tenacity import _utils
-from tenacity.compat import get_exc_info_from_future
+
+if typing.TYPE_CHECKING:
+    from tenacity import RetryCallState
 
 
-def before_sleep_nothing(retry_state):
-    """Before call strategy that does nothing."""
+def before_sleep_nothing(retry_state: "RetryCallState") -> None:
+    """Before sleep strategy that does nothing."""
 
 
-def before_sleep_log(logger, log_level, exc_info=False):
-    """Before call strategy that logs to some logger the attempt."""
-    def log_it(retry_state):
+def before_sleep_log(
+    logger: _utils.LoggerProtocol,
+    log_level: int,
+    exc_info: bool = False,
+    sec_format: str = "%.3g",
+) -> typing.Callable[["RetryCallState"], None]:
+    """Before sleep strategy that logs to some logger the attempt."""
+
+    def log_it(retry_state: "RetryCallState") -> None:
+        if retry_state.outcome is None:
+            raise RuntimeError("log_it() called before outcome was set")
+
+        if retry_state.next_action is None:
+            raise RuntimeError("log_it() called before next_action was set")
+
         if retry_state.outcome.failed:
             ex = retry_state.outcome.exception()
-            verb, value = 'raised', '%s: %s' % (type(ex).__name__, ex)
-
-            if exc_info:
-                local_exc_info = get_exc_info_from_future(retry_state.outcome)
-            else:
-                local_exc_info = False
+            verb, value = "raised", f"{ex.__class__.__name__}: {ex}"
         else:
-            verb, value = 'returned', retry_state.outcome.result()
-            local_exc_info = False  # exc_info does not apply when no exception
+            verb, value = "returned", retry_state.outcome.result()
 
-        logger.log(log_level,
-                   "Retrying %s in %s seconds as it %s %s.",
-                   _utils.get_callback_name(retry_state.fn),
-                   getattr(retry_state.next_action, 'sleep'),
-                   verb, value,
-                   exc_info=local_exc_info)
+        fn_name = retry_state.get_fn_name()
+
+        msg = (
+            f"Retrying {fn_name} "
+            f"in {sec_format % retry_state.next_action.sleep} seconds as it {verb} {value}."
+        )
+
+        if exc_info and retry_state.outcome.failed:
+            ex = retry_state.outcome.exception()
+            if ex is not None:
+                tb = "".join(traceback.format_exception(type(ex), ex, ex.__traceback__))
+                msg = f"{msg}\n{tb.rstrip()}"
+
+        logger.log(log_level, msg)
+
     return log_it

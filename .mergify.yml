@@ -1,32 +1,34 @@
+queue_rules:
+  - name: default
+    merge_method: squash
+    queue_conditions:
+      - or:
+        - author = jd
+        - "#approved-reviews-by >= 1"
+        - author = dependabot[bot]
+      - "check-success=test (3.10, check)"
+      - "check-success=test (3.11, check)"
+      - "check-success=test (3.12, check)"
+      - "check-success=test (3.13, check)"
+      - "check-success=test (3.14, check)"
+      - "check-success=test (3.14, lint)"
+      - "check-success=test (3.14, mypy)"
+
+merge_protections_settings:
+  auto_merge_conditions:
+    - or:
+      - author = jd
+      - "#approved-reviews-by >= 1"
+      - author = dependabot[bot]
+    - "check-success=test (3.10, check)"
+    - "check-success=test (3.11, check)"
+    - "check-success=test (3.12, check)"
+    - "check-success=test (3.13, check)"
+    - "check-success=test (3.14, check)"
+    - "check-success=test (3.14, lint)"
+    - "check-success=test (3.14, mypy)"
+
 pull_request_rules:
-  - name: automatic merge
-    conditions:
-      - "status-success=ci/circleci: pep8"
-      - "status-success=ci/circleci: py27"
-      - "status-success=ci/circleci: py35"
-      - "status-success=ci/circleci: py36"
-      - "status-success=ci/circleci: py37"
-      - "status-success=ci/circleci: py38"
-      - "#approved-reviews-by>=1"
-      - label!=work-in-progress
-    actions:
-      merge:
-        strict: "smart"
-        method: squash
-  - name: automatic merge for jd
-    conditions:
-      - author=jd
-      - "status-success=ci/circleci: pep8"
-      - "status-success=ci/circleci: py27"
-      - "status-success=ci/circleci: py35"
-      - "status-success=ci/circleci: py36"
-      - "status-success=ci/circleci: py37"
-      - "status-success=ci/circleci: py38"
-      - label!=work-in-progress
-    actions:
-      merge:
-        strict: "smart"
-        method: squash
   - name: dismiss reviews
     conditions: []
     actions:

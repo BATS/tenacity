@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright 2017 Elisey Zanko
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,36 +13,48 @@
 # limitations under the License.
 
 import sys
-
-from tenacity import BaseRetrying
-from tenacity import DoAttempt
-from tenacity import DoSleep
-from tenacity import RetryCallState
+import typing
 
 from tornado import gen
 
+from tenacity import BaseRetrying, DoAttempt, DoSleep, RetryCallState
+from tenacity._utils import override
+
+if typing.TYPE_CHECKING:
+    from tornado.concurrent import Future
+
+_RetValT = typing.TypeVar("_RetValT")
+
 
 class TornadoRetrying(BaseRetrying):
+    sleep: typing.Callable[..., "Future[None]"]
 
-    def __init__(self,
-                 sleep=gen.sleep,
-                 **kwargs):
-        super(TornadoRetrying, self).__init__(**kwargs)
+    def __init__(
+        self,
+        sleep: "typing.Callable[[float], Future[None]]" = gen.sleep,
+        **kwargs: typing.Any,
+    ) -> None:
+        super().__init__(**kwargs)
         self.sleep = sleep
 
     @gen.coroutine
-    def __call__(self, fn, *args, **kwargs):
-        self.begin(fn)
+    @override
+    def __call__(  # type: ignore[override]
+        self,
+        fn: "typing.Callable[..., typing.Generator[typing.Any, typing.Any, _RetValT] | Future[_RetValT]]",
+        *args: typing.Any,
+        **kwargs: typing.Any,
+    ) -> "typing.Generator[typing.Any, typing.Any, _RetValT]":
+        self.begin()
 
-        retry_state = RetryCallState(
-            retry_object=self, fn=fn, args=args, kwargs=kwargs)
+        retry_state = RetryCallState(retry_object=self, fn=fn, args=args, kwargs=kwargs)
         while True:
             do = self.iter(retry_state=retry_state)
             if isinstance(do, DoAttempt):
                 try:
                     result = yield fn(*args, **kwargs)
                 except BaseException:
-                    retry_state.set_exception(sys.exc_info())
+                    retry_state.set_exception(sys.exc_info())  # type: ignore[arg-type]
                 else:
                     retry_state.set_result(result)
             elif isinstance(do, DoSleep):

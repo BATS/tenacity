@@ -13,89 +13,75 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import contextlib
+import functools
 import inspect
 import sys
-import time
-from functools import update_wrapper
+import typing
+from datetime import timedelta
 
-import six
-
-# sys.maxint / 2, since Python 3.2 doesn't have a sys.maxint...
-try:
-    MAX_WAIT = sys.maxint / 2
-except AttributeError:
-    MAX_WAIT = 1073741823
-
-
-if six.PY2:
-    from functools import WRAPPER_ASSIGNMENTS, WRAPPER_UPDATES
-
-    def wraps(fn):
-        """Do the same as six.wraps but only copy attributes that exist.
-
-        For example, object instances don't have __name__ attribute, so
-        six.wraps fails. This is fixed in Python 3
-        (https://bugs.python.org/issue3445), but didn't get backported to six.
-
-        Also, see https://github.com/benjaminp/six/issues/250.
-        """
-        def filter_hasattr(obj, attrs):
-            return tuple(a for a in attrs if hasattr(obj, a))
-        return six.wraps(
-            fn,
-            assigned=filter_hasattr(fn, WRAPPER_ASSIGNMENTS),
-            updated=filter_hasattr(fn, WRAPPER_UPDATES))
-
-    def capture(fut, tb):
-        # TODO(harlowja): delete this in future, since its
-        # has to repeatedly calculate this crap.
-        fut.set_exception_info(tb[1], tb[2])
-
-    def getargspec(func):
-        # This was deprecated in Python 3.
-        return inspect.getargspec(func)
+if typing.TYPE_CHECKING:
+    # Type checkers recognise this by name and use it to enforce
+    # `explicit-override`; taking it from typing_extensions means they do so
+    # whatever `python_version` they are run under. It is never imported at
+    # runtime, so it stays a type-check-only dependency.
+    from typing_extensions import override as override
+elif sys.version_info >= (3, 12):
+    from typing import override
 else:
-    from functools import wraps  # noqa
+    _F = typing.TypeVar("_F", bound=typing.Callable[..., typing.Any])
 
-    def capture(fut, tb):
-        fut.set_exception(tb[1])
+    def override(method: _F) -> _F:
+        """Backport of `typing.override` for Python < 3.12.
 
-    def getargspec(func):
-        return inspect.getfullargspec(func)
-
-
-def visible_attrs(obj, attrs=None):
-    if attrs is None:
-        attrs = {}
-    for attr_name, attr in inspect.getmembers(obj):
-        if attr_name.startswith("_"):
-            continue
-        attrs[attr_name] = attr
-    return attrs
+        Only the runtime half is needed: setting the PEP 698 `__override__`
+        marker that introspection tools look for.
+        """
+        with contextlib.suppress(AttributeError, TypeError):
+            # Not every callable allows attribute assignment.
+            method.__override__ = True
+        return method
 
 
-def find_ordinal(pos_num):
+# sys.maxsize:
+# An integer giving the maximum value a variable of type Py_ssize_t can take.
+MAX_WAIT = sys.maxsize / 2
+
+
+class LoggerProtocol(typing.Protocol):
+    """
+    Protocol used by utils expecting a logger (eg: before_log).
+
+    Compatible with logging, structlog, loguru, etc...
+    """
+
+    def log(self, level: int, msg: str, *args: typing.Any) -> typing.Any: ...
+
+
+def find_ordinal(pos_num: int) -> str:
     # See: https://en.wikipedia.org/wiki/English_numerals#Ordinal_numbers
+
+    if 11 <= (pos_num % 100) <= 13:
+        return "th"
+
     if pos_num == 0:
         return "th"
-    elif pos_num == 1:
-        return 'st'
-    elif pos_num == 2:
-        return 'nd'
-    elif pos_num == 3:
-        return 'rd'
-    elif pos_num >= 4 and pos_num <= 20:
-        return 'th'
-    else:
-        return find_ordinal(pos_num % 10)
+    if pos_num == 1:
+        return "st"
+    if pos_num == 2:
+        return "nd"
+    if pos_num == 3:
+        return "rd"
+    if 4 <= pos_num <= 20:
+        return "th"
+    return find_ordinal(pos_num % 10)
 
 
-def to_ordinal(pos_num):
-    return "%i%s" % (pos_num, find_ordinal(pos_num))
+def to_ordinal(pos_num: int) -> str:
+    return f"{pos_num}{find_ordinal(pos_num)}"
 
 
-def get_callback_name(cb):
+def get_callback_name(cb: typing.Callable[..., typing.Any]) -> str:
     """Get a callback fully-qualified name.
 
     If no name can be produced ``repr(cb)`` is called and returned.
@@ -104,51 +90,43 @@ def get_callback_name(cb):
     try:
         segments.append(cb.__qualname__)
     except AttributeError:
-        try:
+        with contextlib.suppress(AttributeError):
             segments.append(cb.__name__)
-            if inspect.ismethod(cb):
-                try:
-                    # This attribute doesn't exist on py3.x or newer, so
-                    # we optionally ignore it... (on those versions of
-                    # python `__qualname__` should have been found anyway).
-                    segments.insert(0, cb.im_class.__name__)
-                except AttributeError:
-                    pass
-        except AttributeError:
-            pass
     if not segments:
         return repr(cb)
-    else:
-        try:
-            # When running under sphinx it appears this can be none?
-            if cb.__module__:
-                segments.insert(0, cb.__module__)
-        except AttributeError:
-            pass
-        return ".".join(segments)
+    with contextlib.suppress(AttributeError):
+        # When running under sphinx it appears this can be none?
+        if cb.__module__:
+            segments.insert(0, cb.__module__)
+    return ".".join(segments)
 
 
-try:
-    now = time.monotonic  # noqa
-except AttributeError:
-    from monotonic import monotonic as now  # noqa
+time_unit_type = int | float | timedelta
 
 
-class cached_property(object):
-    """A property that is computed once per instance.
+def to_seconds(time_unit: time_unit_type) -> float:
+    return float(
+        time_unit.total_seconds() if isinstance(time_unit, timedelta) else time_unit
+    )
 
-    Upon being computed it replaces itself with an ordinary attribute. Deleting
-    the attribute resets the property.
 
-    Source: https://github.com/bottlepy/bottle/blob/1de24157e74a6971d136550afe1b63eec5b0df2b/bottle.py#L234-L246
-    """  # noqa: E501
+def is_coroutine_callable(call: typing.Callable[..., typing.Any]) -> bool:
+    if inspect.isclass(call):
+        return False
+    if inspect.iscoroutinefunction(call):
+        return True
+    partial_call = isinstance(call, functools.partial) and call.func
+    dunder_call = partial_call or getattr(call, "__call__", None)  # noqa: B004
+    return inspect.iscoroutinefunction(dunder_call)
 
-    def __init__(self, func):
-        update_wrapper(self, func)
-        self.func = func
 
-    def __get__(self, obj, cls):
-        if obj is None:
-            return self
-        value = obj.__dict__[self.func.__name__] = self.func(obj)
-        return value
+def wrap_to_async_func(
+    call: typing.Callable[..., typing.Any],
+) -> typing.Callable[..., typing.Awaitable[typing.Any]]:
+    if is_coroutine_callable(call):
+        return call
+
+    async def inner(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
+        return call(*args, **kwargs)
+
+    return inner
